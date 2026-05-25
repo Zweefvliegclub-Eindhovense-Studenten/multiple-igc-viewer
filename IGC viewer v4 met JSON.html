@@ -160,13 +160,19 @@
               <div class="actions">
                   <button type="button" id="btnAddAnother">Add another IGC file</button>
                   <button type="button" id="btnClear" class="secondary">Clear map</button>
-                  <button type="button" id="btnTogglePlayPause">Play</button>
-                  <select id="animationSpeed">
+                  <button type="button" id="btnTogglePlayPause" style="display: none;">Play</button>
+                  <select id="animationSpeed" style="display: none;">
+                      <option value="1">1x</option>
+                      <option value="2">2x</option>
+                      <option value="4">4x</option>
                       <option value="8">8x</option>
                       <option value="16" selected>16x</option>
                       <option value="32">32x</option>
                       <option value="64">64x</option>
                       <option value="128">128x</option>
+                      <option value="256">256x</option>
+                      <option value="512">512x</option>
+                      <option value="1024">1024x</option>
                   </select>
               </div>
           </div>
@@ -280,7 +286,7 @@
                 } else if (trimmed.startsWith('HFPLTPILOTINCHARGE:')) {
                     fileMeta.pilot1 = trimmed.substring(20).trim();
                 } else if (trimmed.startsWith('HFCM2CREW2:')) {
-                    fileMeta.pilot2 = trimmed.substring(11).trim();
+                     fileMeta.pilot2 = trimmed.substring(11).trim() || '';
                 } else if (trimmed.startsWith('HFGTYGLIDERTYPE:')) {
                     fileMeta.glider = trimmed.substring(16).trim();
                 } else if (trimmed.startsWith('HFDTE')) {
@@ -403,13 +409,18 @@
             }
         }
 
-        function removeFlightOverlays() {
+         function removeFlightOverlays() {
             flightOverlays.forEach(layer => map.removeLayer(layer));
             flightOverlays.length = 0;
+            if (altitudeChart) {
+                altitudeChart.destroy();
+                altitudeChart = null;
+            }
         }
 
          function clearAllFlights() {
             removeFlightOverlays();
+            flights.length = 0;
             displayFlightInfo();
             updatePostLoadUI();
         }
@@ -545,23 +556,24 @@
             URL.revokeObjectURL(url);
         }
 
-        async function importFromJsonFile(file) {
-            let payload;
-            try {
-                payload = JSON.parse(await file.text());
-            } catch {
-                alert('Could not read JSON file');
-                return;
-            }
-            if (flights.length > 0 && !confirm('Replace current flights with imported JSON?')) {
-                return;
-            }
-            try {
-                applySessionPayload(payload);
-            } catch (err) {
-                alert(err.message || 'Import failed');
-            }
-        }
+         async function importFromJsonFile(file) {
+             let payload;
+             try {
+                 payload = JSON.parse(await file.text());
+             } catch {
+                 alert('Could not read JSON file');
+                 return;
+             }
+             if (flights.length > 0 && !confirm('Replace current flights with imported JSON?')) {
+                 return;
+             }
+             try {
+                 clearAllFlights();
+                 applySessionPayload(payload);
+             } catch (err) {
+                 alert(err.message || 'Import failed');
+             }
+         }
 
         function saveCurrentSession() {
             const name = saveNameInput.value.trim();
@@ -599,27 +611,28 @@
             }
         }
 
-        function loadSavedSession() {
-            const name = savedSessionsSelect.value;
-            if (!name) {
-                alert('Select a saved session to load');
-                return;
-            }
-            const saves = getStoredSaves();
-            const entry = saves[name];
-            if (!entry || !entry.flights || entry.flights.length === 0) {
-                alert('Save is empty or invalid');
-                return;
-            }
-            if (flights.length > 0 && !confirm('Replace current flights with this save?')) {
-                return;
-            }
-            try {
-                applySessionPayload(entry);
-            } catch (err) {
-                alert(err.message || 'Load failed');
-            }
-        }
+         function loadSavedSession() {
+             const name = savedSessionsSelect.value;
+             if (!name) {
+                 alert('Select a saved session to load');
+                 return;
+             }
+             const saves = getStoredSaves();
+             const entry = saves[name];
+             if (!entry || !entry.flights || entry.flights.length === 0) {
+                 alert('Save is empty or invalid');
+                 return;
+             }
+             if (flights.length > 0 && !confirm('Replace current flights with this save?')) {
+                 return;
+             }
+             try {
+                 clearAllFlights();
+                 applySessionPayload(entry);
+             } catch (err) {
+                 alert(err.message || 'Load failed');
+             }
+         }
 
         function deleteSavedSession() {
             const name = savedSessionsSelect.value;
@@ -808,7 +821,7 @@
                     const downsampledPoints = downsamplePoints(flight.points);
                     
                     return {
-                        label: `Flight ${idx + 1}${flight.pilot1 ? ' - ' + flight.pilot1 : ''}`,
+                        label: `Flight ${idx + 1}${flight.pilot1 ? ' - ' + flight.pilot1 : ''}${flight.pilot2 && flight.pilot2 !== 'NIL' ? ' & ' + flight.pilot2 : ''}`,
                         data: downsampledPoints.map(point => ({
                             x: igcTimeToSeconds(point.time), // Use seconds since midnight for X position
                             y: point.alt
@@ -905,38 +918,40 @@
             }
         }
         
-        function displayFlightInfo() {
-            const container = document.getElementById('flightInfo');
-            const legend = document.getElementById('legend');
-
-            if (flights.length === 0) {
-                container.innerHTML = '<p style="color:#888;">No flights loaded yet.</p>';
-                legend.innerHTML = '';
-                return;
-            }
-
-            let html = '<table style="width:100%; border-collapse: collapse;">';
-            html += '<tr style="background: #f0f0f0;">';
-            html += '<th style="border: 1px solid #ddd; padding: 8px;">Flight</th>';
-            html += '<th style="border: 1px solid #ddd; padding: 8px;">Pilot 1</th>';
-            html += '<th style="border: 1px solid #ddd; padding: 8px;">Pilot 2</th>';
-            html += '<th style="border: 1px solid #ddd; padding: 8px;">Glider</th>';
-            html += '<th style="border: 1px solid #ddd; padding: 8px;">Date</th>';
-            html += '<th style="border: 1px solid #ddd; padding: 8px;">Time UTC</th>';
-            html += '<th style="border: 1px solid #ddd; padding: 8px;">Max (km)</th>';
-            html += '<th style="border: 1px solid #ddd; padding: 8px;">Path (km)</th>';
-            html += '<th style="border: 1px solid #ddd; padding: 8px;">Max Alt (m)</th>';
-            html += '<th style="border: 1px solid #ddd; padding: 8px;">Points</th>';
-            html += '</tr>';
-
-            let legendHtml = '';
+         function displayFlightInfo() {
+             const container = document.getElementById('flightInfo');
+             const legend = document.getElementById('legend');
+ 
+             if (flights.length === 0) {
+                 container.innerHTML = '<p style="color:#888;">No flights loaded yet.</p>';
+                 legend.innerHTML = '';
+                 return;
+             }
+ 
+             let html = '<table style="width:100%; border-collapse: collapse;">';
+             html += '<tr style="background: #f0f0f0;">';
+             html += '<th style="border: 1px solid #ddd; padding: 8px;">Flight</th>';
+             html += '<th style="border: 1px solid #ddd; padding: 8px;">Color</th>';
+             html += '<th style="border: 1px solid #ddd; padding: 8px;">Pilot 1</th>';
+             html += '<th style="border: 1px solid #ddd; padding: 8px;">Pilot 2</th>';
+             html += '<th style="border: 1px solid #ddd; padding: 8px;">Glider</th>';
+             html += '<th style="border: 1px solid #ddd; padding: 8px;">Date</th>';
+             html += '<th style="border: 1px solid #ddd; padding: 8px;">Time UTC</th>';
+             html += '<th style="border: 1px solid #ddd; padding: 8px;">Max (km)</th>';
+             html += '<th style="border: 1px solid #ddd; padding: 8px;">Path (km)</th>';
+             html += '<th style="border: 1px solid #ddd; padding: 8px;">Max Alt (m)</th>';
+             html += '<th style="border: 1px solid #ddd; padding: 8px;">Points</th>';
+             html += '</tr>';
+ 
+             let legendHtml = '';
              flights.forEach((flight, idx) => {
-                 const color = flight.color || getFlightColor(idx);
+                const color = flight.color || getFlightColor(idx);
                 const timeRange = `${formatIgCTime(flight.startTime)} - ${formatIgCTime(flight.endTime)}`;
                 html += `<tr>
                     <td style="border: 1px solid #ddd; padding: 8px; color: ${color}; font-weight: bold;">Flight ${idx + 1}</td>
+                    <td style="border: 1px solid #ddd; padding: 8px;"><input type="color" id="colorPicker${idx}" value="${color}" style="width: 50px; height: 30px;" /></td>
                     <td style="border: 1px solid #ddd; padding: 8px;">${escapeHtml(flight.pilot1) || '—'}</td>
-                    <td style="border: 1px solid #ddd; padding: 8px;">${escapeHtml(flight.pilot2) || '—'}</td>
+                    <td style="border: 1px solid #ddd; padding: 8px;">${flight.pilot2 && flight.pilot2 !== 'NIL' ? escapeHtml(flight.pilot2) : '—'}</td>
                     <td style="border: 1px solid #ddd; padding: 8px;">${escapeHtml(flight.glider) || '—'}</td>
                     <td style="border: 1px solid #ddd; padding: 8px;">${escapeHtml(flight.date) || '—'}</td>
                     <td style="border: 1px solid #ddd; padding: 8px;">${timeRange}</td>
@@ -947,19 +962,38 @@
                 </tr>`;
                 legendHtml += `<div class="legend-item">
                     <div class="legend-color" style="background: ${color};"></div>
-                    <span>Flight ${idx + 1}${flight.pilot1 ? ' — ' + escapeHtml(flight.pilot1) : ''}</span>
+                    <span>Flight ${idx + 1}${flight.pilot1 ? ' — ' + escapeHtml(flight.pilot1) : ''}${flight.pilot2 && flight.pilot2 !== 'NIL' ? ' & ' + escapeHtml(flight.pilot2) : ''}</span>
                 </div>`;
             });
-
-            html += '</table>';
-            html += `<p style="margin-top:10px;font-size:12px;color:#666;">
-                <b>Max</b> — greatest straight-line distance between any two fixes on the track.
-                <b>Path</b> — ground distance while gliding; segments with ground speed below ${THERMAL_MAX_SPEED_KMH} km/h (thermaling) are excluded.
-            </p>`;
-            container.innerHTML = html;
-            legend.innerHTML = legendHtml;
-            updateAltitudeGraph();
-        }
+ 
+             html += '</table>';
+             html += `<p style="margin-top:10px;font-size:12px;color:#666;">
+                 <b>Max</b> — greatest straight-line distance between any two fixes on the track.
+                 <b>Path</b> — ground distance while gliding; segments with ground speed below ${THERMAL_MAX_SPEED_KMH} km/h (thermaling) are excluded.
+             </p>`;
+             container.innerHTML = html;
+             legend.innerHTML = legendHtml;
+ 
+             flights.forEach((flight, idx) => {
+                 document.getElementById(`colorPicker${idx}`).addEventListener('change', (event) => {
+                     updateFlightColor(idx, event.target.value);
+                 });
+             });
+ 
+             updateAltitudeGraph();
+         }
+ 
+         function updateFlightColor(flightIndex, newColor) {
+             flights[flightIndex].color = newColor;
+ 
+             removeFlightOverlays();
+             flights.forEach((flight, idx) => {
+                 renderFlightOnMap(flight.points, idx, flight.color);
+             });
+ 
+             displayFlightInfo();
+             updateAltitudeGraph();
+         }
 
          async function addFlight(file, pilot1Input, pilot2Input, gliderInput, colorInput) {
             try {
