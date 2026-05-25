@@ -22,7 +22,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKER_USERNAME }}/igc-viewer
+          images: ${{ secrets.DOCKER_USERNAME }}/multiple-igc-viewer
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
