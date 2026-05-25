@@ -32,7 +32,7 @@
             border: 1px solid #ddd;
         }
         .leaflet-tile {
-            filter: grayscale(60%);
+            filter: grayscale(80%);
         }
         .panel {
             margin-bottom: 20px;
@@ -141,14 +141,18 @@
                         Pilot 2 <span style="font-weight:normal;color:#888">(optional)</span>
                         <input type="text" id="pilot2" placeholder="Crew / second pilot" />
                     </label>
-                    <label>
-                        Glider <span style="font-weight:normal;color:#888">(optional)</span>
-                        <input type="text" id="glider" placeholder="Glider type" />
-                    </label>
-                </div>
-                <div class="actions">
-                    <button type="submit">Load flight</button>
-                </div>
+                     <label>
+                         Glider <span style="font-weight:normal;color:#888">(optional)</span>
+                         <input type="text" id="glider" placeholder="Glider type" />
+                     </label>
+                      <label>
+                          Color <span style="font-weight:normal;color:#888">(optional)</span>
+                          <input type="color" id="flightColor" value="#000000" />
+                      </label>
+                 </div>
+                 <div class="actions">
+                     <button type="submit">Load flight</button>
+                 </div>
             </form>
         </div>
 
@@ -436,7 +440,7 @@
             }
         }
 
-        function flightToStored(flight) {
+         function flightToStored(flight) {
             return {
                 name: flight.name,
                 pilot1: flight.pilot1,
@@ -449,6 +453,7 @@
                 pointCount: flight.pointCount,
                 maxDistKm: flight.maxDistKm,
                 pathKm: flight.pathKm,
+                color: flight.color,
                 points: flight.points
             };
         }
@@ -620,8 +625,8 @@
             refreshSavedSessionsList();
         }
 
-        function renderFlightOnMap(points, flightIndex) {
-            const color = getFlightColor(flightIndex);
+         function renderFlightOnMap(points, flightIndex, customColor) {
+            const color = customColor || getFlightColor(flightIndex);
             const endPoint = points[points.length - 1];
             const latLngs = points.map(p => [p.lat, p.lon]);
 
@@ -655,29 +660,30 @@
             flightOverlays.push(polyline, startMarker, endMarker);
         }
 
-        function addFlightFromStored(stored) {
+         function addFlightFromStored(stored) {
             const points = stored.points.map(p => ({
                 lat: p.lat,
                 lon: p.lon,
                 alt: p.alt,
                 time: p.time
             }));
-            const idx = flights.length;
-            renderFlightOnMap(points, idx);
-            flights.push({
-                name: stored.name || 'Flight',
-                pilot1: stored.pilot1 || '',
-                pilot2: stored.pilot2 || '',
-                glider: stored.glider || '',
-                date: stored.date || '',
-                startTime: stored.startTime,
-                endTime: stored.endTime,
-                maxAltitude: stored.maxAltitude,
-                pointCount: stored.pointCount,
-                maxDistKm: stored.maxDistKm,
-                pathKm: stored.pathKm,
-                points
-            });
+                 const idx = flights.length;
+                 renderFlightOnMap(points, idx, stored.color);
+                 flights.push({
+                    name: stored.name || 'Flight',
+                    pilot1: stored.pilot1 || '',
+                    pilot2: stored.pilot2 || '',
+                    glider: stored.glider || '',
+                    date: stored.date || '',
+                    startTime: stored.startTime,
+                    endTime: stored.endTime,
+                    maxAltitude: stored.maxAltitude,
+                    pointCount: stored.pointCount,
+                    maxDistKm: stored.maxDistKm,
+                    pathKm: stored.pathKm,
+                    color: stored.color,
+                    points
+                });
         }
 
         function resetLoadForm() {
@@ -786,8 +792,8 @@
                     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
                 }
                 
-                const datasets = flights.map((flight, idx) => {
-                    const color = getFlightColor(idx);
+                 const datasets = flights.map((flight, idx) => {
+                    const color = flight.color || getFlightColor(idx);
                     const downsampledPoints = downsamplePoints(flight.points);
                     
                     return {
@@ -913,8 +919,8 @@
             html += '</tr>';
 
             let legendHtml = '';
-            flights.forEach((flight, idx) => {
-                const color = getFlightColor(idx);
+             flights.forEach((flight, idx) => {
+                 const color = flight.color || getFlightColor(idx);
                 const timeRange = `${formatIgCTime(flight.startTime)} - ${formatIgCTime(flight.endTime)}`;
                 html += `<tr>
                     <td style="border: 1px solid #ddd; padding: 8px; color: ${color}; font-weight: bold;">Flight ${idx + 1}</td>
@@ -944,7 +950,7 @@
             updateAltitudeGraph();
         }
 
-        async function addFlight(file, pilot1Input, pilot2Input, gliderInput) {
+         async function addFlight(file, pilot1Input, pilot2Input, gliderInput, colorInput) {
             try {
                 console.log('Loading IGC file:', file.name);
                 const content = await file.text();
@@ -960,9 +966,9 @@
 
                 const { maxDistKm, pathCruiseKm } = computeTrackDistances(points);
                 const idx = flights.length;
-                renderFlightOnMap(points, idx);
+                 renderFlightOnMap(points, idx, colorInput);
 
-                flights.push({
+                 flights.push({
                     name: file.name,
                     pilot1: pilot1Input || fileMeta.pilot1,
                     pilot2: pilot2Input || fileMeta.pilot2,
@@ -974,6 +980,7 @@
                     pointCount: points.length,
                     maxDistKm,
                     pathKm: pathCruiseKm,
+                    color: colorInput,
                     points
                 });
 
@@ -988,7 +995,7 @@
             }
         }
 
-        flightForm.addEventListener('submit', async (e) => {
+         flightForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             const fileInput = document.getElementById('igcFile');
             if (!fileInput.files.length) {
@@ -998,7 +1005,9 @@
             const pilot1 = document.getElementById('pilot1').value.trim();
             const pilot2 = document.getElementById('pilot2').value.trim();
             const glider = document.getElementById('glider').value.trim();
-            await addFlight(fileInput.files[0], pilot1, pilot2, glider);
+             const colorInput = document.getElementById('flightColor');
+             const color = colorInput.value === '#000000' ? null : colorInput.value;
+             await addFlight(fileInput.files[0], pilot1, pilot2, glider, color);
         });
 
         document.getElementById('btnAddAnother').addEventListener('click', () => {
