@@ -7,6 +7,7 @@
     <title>IGC Viewer</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -155,6 +156,7 @@
         </div>
 
         <div id="map"></div>
+        <div id="altitudeGraph" style="width: 100%; height: 200px; margin-top: 20px; border: 1px solid #ddd; border-radius: 4px;"></div>
 
         <div class="info">
             <h3>Flights</h3>
@@ -202,6 +204,7 @@
         }).addTo(map);
 
         const STORAGE_KEY = 'igcViewerSaves';
+        let altitudeChart = null;
         const SESSION_VERSION = 1;
         const colors = ['#FF6B6B', '#4ECDC4', '#FFE66D', '#95E1D3', '#F38181', '#AA96DA', '#FCBAD3', '#A8D8EA'];
         const flightOverlays = [];
@@ -714,6 +717,173 @@
             return div.innerHTML;
         }
 
+        function updateAltitudeGraph() {
+            try {
+                // Check if Chart.js is loaded
+                if (typeof Chart === 'undefined') {
+                    console.error('Chart.js library not loaded');
+                    return;
+                }
+                
+                const graphElement = document.getElementById('altitudeGraph');
+                if (!graphElement) {
+                    console.error('Altitude graph element not found');
+                    return;
+                }
+                
+                console.log('Graph element:', graphElement, 'tagName:', graphElement.tagName);
+                
+                // Check if it's already a canvas, if not, create one
+                let canvas;
+                if (graphElement.tagName === 'CANVAS') {
+                    canvas = graphElement;
+                } else {
+                    // Clear the container and create a canvas
+                    graphElement.innerHTML = '';
+                    canvas = document.createElement('canvas');
+                    canvas.style.width = '100%';
+                    canvas.style.height = '100%';
+                    graphElement.appendChild(canvas);
+                }
+                
+                const ctx = canvas.getContext('2d');
+                
+                if (altitudeChart) {
+                    altitudeChart.destroy();
+                }
+                
+                if (flights.length === 0) {
+                    return;
+                }
+                
+                // Function to downsample data points while preserving key features
+                function downsamplePoints(points, targetCount = 500) {
+                    if (points.length <= targetCount) {
+                        return points;
+                    }
+                    
+                    // Simple downsampling: keep every nth point
+                    const step = Math.max(1, Math.floor(points.length / targetCount));
+                    return points.filter((_, index) => index % step === 0);
+                }
+                
+                // Function to convert IGC time (HHMMSS) to seconds since midnight for proper scaling
+                function igcTimeToSeconds(hhmmss) {
+                    const h = parseInt(hhmmss.substring(0, 2), 10);
+                    const m = parseInt(hhmmss.substring(2, 4), 10);
+                    const s = parseInt(hhmmss.substring(4, 6), 10);
+                    return h * 3600 + m * 60 + s;
+                }
+                
+                // Function to format seconds back to HH:MM for tooltips
+                function formatSecondsToTime(seconds) {
+                    const h = Math.floor(seconds / 3600);
+                    const m = Math.floor((seconds % 3600) / 60);
+                    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+                }
+                
+                const datasets = flights.map((flight, idx) => {
+                    const color = getFlightColor(idx);
+                    const downsampledPoints = downsamplePoints(flight.points);
+                    
+                    return {
+                        label: `Flight ${idx + 1}${flight.pilot1 ? ' - ' + flight.pilot1 : ''}`,
+                        data: downsampledPoints.map(point => ({
+                            x: igcTimeToSeconds(point.time), // Use seconds since midnight for X position
+                            y: point.alt
+                        })),
+                        borderColor: color,
+                        backgroundColor: color + '40',
+                        borderWidth: 1,
+                        fill: false,
+                        tension: 0.1,
+                        pointRadius: 0, // Remove points to make lines cleaner
+                        pointHitRadius: 5 // But keep hit detection for tooltips
+                    };
+                });
+                
+                altitudeChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        datasets: datasets
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        animation: {
+                            duration: 0 // Disable animation for better performance
+                        },
+                        elements: {
+                            line: {
+                                borderWidth: 1,
+                                borderJoinStyle: 'round' // Smoother line joins
+                            }
+                        },
+                        scales: {
+                            x: {
+                                type: 'linear',
+                                title: {
+                                    display: true,
+                                    text: 'UTC Time'
+                                },
+                                ticks: {
+                                    // Convert seconds back to HH:MM format for display
+                                    callback: function(value, index, values) {
+                                        return formatSecondsToTime(value);
+                                    },
+                                    autoSkip: true,
+                                    maxTicksLimit: 20,
+                                    maxRotation: 45,
+                                    minRotation: 45
+                                }
+                            },
+                            y: {
+                                title: {
+                                    display: true,
+                                    text: 'Altitude (m)'
+                                },
+                                beginAtZero: true
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                position: 'top',
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    title: function(context) {
+                                        const flightIndex = context[0].datasetIndex;
+                                        const flight = flights[flightIndex];
+                                        if (flight && context[0].raw) {
+                                            // Find the closest original point to this downsampled point
+                                            const timeSeconds = context[0].raw.x;
+                                            const timeStr = formatSecondsToTime(timeSeconds);
+                                            return `Time: ${timeStr}`;
+                                        }
+                                        return '';
+                                    },
+                                    label: function(context) {
+                                        return `Altitude: ${context.raw.y} m`;
+                                    },
+                                    afterLabel: function(context) {
+                                        // Show flight info in tooltip
+                                        const flightIndex = context.datasetIndex;
+                                        const flight = flights[flightIndex];
+                                        if (flight) {
+                                            return [`Pilot: ${flight.pilot1 || 'N/A'}`, `Glider: ${flight.glider || 'N/A'}`];
+                                        }
+                                        return [];
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            } catch (error) {
+                console.error('Error updating altitude graph:', error);
+            }
+        }
+        
         function displayFlightInfo() {
             const container = document.getElementById('flightInfo');
             const legend = document.getElementById('legend');
@@ -767,40 +937,51 @@
             </p>`;
             container.innerHTML = html;
             legend.innerHTML = legendHtml;
+            updateAltitudeGraph();
         }
 
         async function addFlight(file, pilot1Input, pilot2Input, gliderInput) {
-            const content = await file.text();
-            const { points, fileMeta, trackMeta } = parseIGC(content);
+            try {
+                console.log('Loading IGC file:', file.name);
+                const content = await file.text();
+                console.log('File content length:', content.length);
+                
+                const { points, fileMeta, trackMeta } = parseIGC(content);
+                console.log('Parsed points:', points.length);
 
-            if (points.length === 0) {
-                alert(`No valid GPS points found in ${file.name}`);
+                if (points.length === 0) {
+                    alert(`No valid GPS points found in ${file.name}`);
+                    return false;
+                }
+
+                const { maxDistKm, pathCruiseKm } = computeTrackDistances(points);
+                const idx = flights.length;
+                renderFlightOnMap(points, idx);
+
+                flights.push({
+                    name: file.name,
+                    pilot1: pilot1Input || fileMeta.pilot1,
+                    pilot2: pilot2Input || fileMeta.pilot2,
+                    glider: gliderInput || fileMeta.glider,
+                    date: fileMeta.date,
+                    startTime: trackMeta.startTime,
+                    endTime: trackMeta.endTime,
+                    maxAltitude: trackMeta.maxAltitude,
+                    pointCount: points.length,
+                    maxDistKm,
+                    pathKm: pathCruiseKm,
+                    points
+                });
+
+                fitMapToFlights();
+                displayFlightInfo();
+                updatePostLoadUI();
+                return true;
+            } catch (error) {
+                console.error('Error loading IGC file:', error);
+                alert('Error loading IGC file: ' + error.message);
                 return false;
             }
-
-            const { maxDistKm, pathCruiseKm } = computeTrackDistances(points);
-            const idx = flights.length;
-            renderFlightOnMap(points, idx);
-
-            flights.push({
-                name: file.name,
-                pilot1: pilot1Input || fileMeta.pilot1,
-                pilot2: pilot2Input || fileMeta.pilot2,
-                glider: gliderInput || fileMeta.glider,
-                date: fileMeta.date,
-                startTime: trackMeta.startTime,
-                endTime: trackMeta.endTime,
-                maxAltitude: trackMeta.maxAltitude,
-                pointCount: points.length,
-                maxDistKm,
-                pathKm: pathCruiseKm,
-                points
-            });
-
-            fitMapToFlights();
-            displayFlightInfo();
-            updatePostLoadUI();
-            return true;
         }
 
         flightForm.addEventListener('submit', async (e) => {
@@ -842,6 +1023,17 @@
         });
 
         refreshSavedSessionsList();
+        
+        // Test function to check if altitude graph is working
+        window.testAltitudeGraph = function() {
+            console.log('Testing altitude graph...');
+            console.log('Chart.js loaded:', typeof Chart !== 'undefined');
+            console.log('Altitude graph element:', document.getElementById('altitudeGraph'));
+            console.log('Flights:', flights);
+            if (flights.length > 0) {
+                console.log('First flight points:', flights[0].points.slice(0, 5));
+            }
+        };
     </script>
 </body>
 </html>
