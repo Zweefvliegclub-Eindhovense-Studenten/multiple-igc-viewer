@@ -1,0 +1,845 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IGC Viewer</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: Arial, sans-serif;
+            background: #f0f0f0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 { color: #333; margin-bottom: 20px; }
+        h3 { margin-bottom: 12px; color: #444; }
+        #map {
+            width: 100%;
+            height: 600px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+        }
+        .panel {
+            margin-bottom: 20px;
+            margin-top: 20px;
+            padding: 16px;
+            background: #f9f9f9;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+        }
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 12px;
+            margin-bottom: 14px;
+        }
+        label {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            font-size: 13px;
+            color: #444;
+        }
+        input[type="text"],
+        input[type="file"],
+        select {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        select { min-width: 200px; }
+        .storage-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: flex-end;
+            margin-bottom: 12px;
+        }
+        .storage-row label { min-width: 200px; flex: 1; }
+        .actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        button {
+            padding: 8px 16px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover { background: #0056b3; }
+        button.secondary {
+            background: #6c757d;
+        }
+        button.secondary:hover {
+            background: #545b62;
+        }
+        .hidden { display: none; }
+        .info {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f9f9f9;
+            border-left: 4px solid #007bff;
+            border-radius: 4px;
+        }
+        .legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-top: 12px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+        }
+        .legend-color {
+            width: 20px;
+            height: 3px;
+            border-radius: 2px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>IGC Viewer</h1>
+
+        <div id="loadPanel" class="panel">
+            <h3>Load IGC file</h3>
+            <form id="flightForm">
+                <div class="form-grid">
+                    <label>
+                        IGC file
+                        <input type="file" id="igcFile" accept=".igc" required />
+                    </label>
+                    <label>
+                        Pilot 1 <span style="font-weight:normal;color:#888">(optional)</span>
+                        <input type="text" id="pilot1" placeholder="Pilot in charge" />
+                    </label>
+                    <label>
+                        Pilot 2 <span style="font-weight:normal;color:#888">(optional)</span>
+                        <input type="text" id="pilot2" placeholder="Crew / second pilot" />
+                    </label>
+                    <label>
+                        Glider <span style="font-weight:normal;color:#888">(optional)</span>
+                        <input type="text" id="glider" placeholder="Glider type" />
+                    </label>
+                </div>
+                <div class="actions">
+                    <button type="submit">Load flight</button>
+                </div>
+            </form>
+        </div>
+
+        <div id="postLoadPanel" class="panel hidden">
+            <div class="actions">
+                <button type="button" id="btnAddAnother">Add another IGC file</button>
+                <button type="button" id="btnClear" class="secondary">Clear map</button>
+            </div>
+        </div>
+
+        <div id="map"></div>
+
+        <div class="info">
+            <h3>Flights</h3>
+            <div id="flightInfo"><p style="color:#888;">No flights loaded yet.</p></div>
+            <div id="legend" class="legend"></div>
+        </div>
+
+        <div id="storagePanel" class="panel">
+            <h3>Saved sessions</h3>
+            <div class="storage-row">
+                <label>
+                    Save as
+                    <input type="text" id="saveName" placeholder="e.g. Mulheim 18 May" />
+                </label>
+                <label>
+                    Load saved
+                    <select id="savedSessions">
+                        <option value="">— select a save —</option>
+                    </select>
+                </label>
+            </div>
+            <div class="actions">
+                <button type="button" id="btnSave">Save to browser</button>
+                <button type="button" id="btnLoadSaved">Load selected</button>
+                <button type="button" id="btnDeleteSaved" class="secondary">Delete selected</button>
+            </div>
+            <h3 style="margin-top: 16px;">JSON file</h3>
+            <p style="font-size: 12px; color: #666; margin-bottom: 10px;">
+                Export or import the current map (tracks, metadata, and map position) as a <code>.json</code> file.
+            </p>
+            <div class="actions">
+                <button type="button" id="btnExportJson">Export to JSON file</button>
+                <button type="button" id="btnImportJson">Import JSON file</button>
+                <input type="file" id="jsonImportFile" accept=".json,application/json" class="hidden" />
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const map = L.map('map').setView([50, 10], 6);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors',
+            maxZoom: 19
+        }).addTo(map);
+
+        const STORAGE_KEY = 'igcViewerSaves';
+        const SESSION_VERSION = 1;
+        const colors = ['#FF6B6B', '#4ECDC4', '#FFE66D', '#95E1D3', '#F38181', '#AA96DA', '#FCBAD3', '#A8D8EA'];
+        const flightOverlays = [];
+        const flights = [];
+
+        const loadPanel = document.getElementById('loadPanel');
+        const postLoadPanel = document.getElementById('postLoadPanel');
+        const flightForm = document.getElementById('flightForm');
+        const saveNameInput = document.getElementById('saveName');
+        const savedSessionsSelect = document.getElementById('savedSessions');
+
+        function getFlightColor(index) {
+            return colors[index % colors.length];
+        }
+
+        function parseHFDTE(line) {
+            let dateStr = '';
+            if (line.startsWith('HFDTEDATE:')) {
+                dateStr = line.substring(10).trim();
+            } else if (line.startsWith('HFDTE:')) {
+                dateStr = line.substring(6).trim();
+            } else if (line.startsWith('HFDTE') && line.length >= 11) {
+                dateStr = line.substring(5, 11);
+            }
+            return dateStr.length >= 6 ? dateStr.substring(0, 6) : '';
+        }
+
+        function formatDateISO(ddmmyy) {
+            if (!ddmmyy || ddmmyy.length < 6) return '';
+            const day = ddmmyy.substring(0, 2);
+            const month = ddmmyy.substring(2, 4);
+            const yy = parseInt(ddmmyy.substring(4, 6), 10);
+            const year = yy >= 80 ? 1900 + yy : 2000 + yy;
+            return `${year}-${month}-${day}`;
+        }
+
+        function parseIGC(content) {
+            const lines = content.split('\n');
+            const points = [];
+            const fileMeta = {
+                pilot1: '',
+                pilot2: '',
+                glider: '',
+                date: ''
+            };
+
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (trimmed.startsWith('PILOT:')) {
+                    fileMeta.pilot1 = trimmed.substring(6).trim();
+                } else if (trimmed.startsWith('GLIDER:')) {
+                    fileMeta.glider = trimmed.substring(7).trim();
+                } else if (trimmed.startsWith('HFPLTPILOTINCHARGE:')) {
+                    fileMeta.pilot1 = trimmed.substring(20).trim();
+                } else if (trimmed.startsWith('HFCM2CREW2:')) {
+                    fileMeta.pilot2 = trimmed.substring(11).trim();
+                } else if (trimmed.startsWith('HFGTYGLIDERTYPE:')) {
+                    fileMeta.glider = trimmed.substring(16).trim();
+                } else if (trimmed.startsWith('HFDTE')) {
+                    const raw = parseHFDTE(trimmed);
+                    if (raw) fileMeta.date = formatDateISO(raw);
+                } else if (trimmed.startsWith('B') && trimmed.length >= 35) {
+                    if (trimmed.charAt(24) === 'V') continue;
+
+                    const time = trimmed.substring(1, 7);
+                    const lat = parseCoordinate(trimmed.substring(7, 15), true);
+                    const lon = parseCoordinate(trimmed.substring(15, 24), false);
+                    const alt = parseInt(trimmed.substring(25, 30), 10);
+                    const gpsAlt = parseInt(trimmed.substring(30, 35), 10);
+
+                    if (lat !== null && lon !== null) {
+                        points.push({
+                            lat,
+                            lon,
+                            alt: alt > 0 ? alt : gpsAlt,
+                            time
+                        });
+                    }
+                }
+            }
+
+            let startTime = '';
+            let endTime = '';
+            let maxAltitude = 0;
+            for (const p of points) {
+                if (!startTime) startTime = p.time;
+                endTime = p.time;
+                maxAltitude = Math.max(maxAltitude, p.alt);
+            }
+
+            return {
+                points,
+                fileMeta,
+                trackMeta: { startTime, endTime, maxAltitude }
+            };
+        }
+
+        function formatIgCTime(hhmmss) {
+            if (!hhmmss || hhmmss.length < 4) return hhmmss || '';
+            return `${hhmmss.substring(0, 2)}:${hhmmss.substring(2, 4)}`;
+        }
+
+        const THERMAL_MAX_SPEED_KMH = 40;   // below this = thermaling, excluded from path
+        const MAX_PLAUSIBLE_SPEED_KMH = 280; // skip GPS spike segments
+
+        function haversineKm(lat1, lon1, lat2, lon2) {
+            const R = 6371;
+            const toRad = d => d * Math.PI / 180;
+            const dLat = toRad(lat2 - lat1);
+            const dLon = toRad(lon2 - lon1);
+            const a = Math.sin(dLat / 2) ** 2
+                + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        }
+
+        function igcTimeToSeconds(hhmmss) {
+            const h = parseInt(hhmmss.substring(0, 2), 10);
+            const m = parseInt(hhmmss.substring(2, 4), 10);
+            const s = parseInt(hhmmss.substring(4, 6), 10);
+            return h * 3600 + m * 60 + s;
+        }
+
+        function timeDeltaSeconds(t1, t2) {
+            let dt = igcTimeToSeconds(t2) - igcTimeToSeconds(t1);
+            if (dt < 0) dt += 86400;
+            return dt;
+        }
+
+        function computeTrackDistances(points) {
+            let pathTotalKm = 0;
+            let pathCruiseKm = 0;
+
+            for (let i = 1; i < points.length; i++) {
+                const segKm = haversineKm(
+                    points[i - 1].lat, points[i - 1].lon,
+                    points[i].lat, points[i].lon
+                );
+                const dt = timeDeltaSeconds(points[i - 1].time, points[i].time);
+                if (dt <= 0) continue;
+
+                const speedKmh = (segKm / dt) * 3600;
+                if (speedKmh > MAX_PLAUSIBLE_SPEED_KMH) continue;
+
+                pathTotalKm += segKm;
+                if (speedKmh >= THERMAL_MAX_SPEED_KMH) {
+                    pathCruiseKm += segKm;
+                }
+            }
+
+            let maxDistKm = 0;
+            for (let i = 0; i < points.length; i++) {
+                for (let j = i + 1; j < points.length; j++) {
+                    const d = haversineKm(
+                        points[i].lat, points[i].lon,
+                        points[j].lat, points[j].lon
+                    );
+                    if (d > maxDistKm) maxDistKm = d;
+                }
+            }
+
+            return { maxDistKm, pathCruiseKm, pathTotalKm };
+        }
+
+        function parseCoordinate(coord, isLatitude) {
+            try {
+                const degrees = parseInt(coord.substring(0, isLatitude ? 2 : 3), 10);
+                const minutes = parseInt(coord.substring(isLatitude ? 2 : 3, isLatitude ? 4 : 5), 10);
+                const mmm = parseInt(coord.substring(isLatitude ? 4 : 5, isLatitude ? 7 : 8), 10);
+                const direction = coord.substring(isLatitude ? 7 : 8);
+                if ([degrees, minutes, mmm].some(Number.isNaN)) return null;
+                let decimal = degrees + (minutes + mmm / 1000) / 60;
+                if (direction === 'S' || direction === 'W') decimal = -decimal;
+                return decimal;
+            } catch {
+                return null;
+            }
+        }
+
+        function removeFlightOverlays() {
+            flightOverlays.forEach(layer => map.removeLayer(layer));
+            flightOverlays.length = 0;
+        }
+
+        function clearAllFlights() {
+            removeFlightOverlays();
+            flights.length = 0;
+            displayFlightInfo();
+            updatePostLoadUI();
+        }
+
+        function getStoredSaves() {
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY);
+                return raw ? JSON.parse(raw) : {};
+            } catch {
+                return {};
+            }
+        }
+
+        function writeStoredSaves(saves) {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(saves));
+        }
+
+        function refreshSavedSessionsList() {
+            const saves = getStoredSaves();
+            const names = Object.keys(saves).sort((a, b) => {
+                const ta = saves[a].savedAt || '';
+                const tb = saves[b].savedAt || '';
+                return tb.localeCompare(ta);
+            });
+            savedSessionsSelect.innerHTML = '<option value="">— select a save —</option>';
+            for (const name of names) {
+                const entry = saves[name];
+                const dateLabel = entry.savedAt
+                    ? new Date(entry.savedAt).toLocaleString()
+                    : '';
+                const flightCount = entry.flights ? entry.flights.length : 0;
+                const label = dateLabel
+                    ? `${name} (${flightCount} flight${flightCount !== 1 ? 's' : ''}, ${dateLabel})`
+                    : name;
+                const opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = label;
+                savedSessionsSelect.appendChild(opt);
+            }
+        }
+
+        function flightToStored(flight) {
+            return {
+                name: flight.name,
+                pilot1: flight.pilot1,
+                pilot2: flight.pilot2,
+                glider: flight.glider,
+                date: flight.date,
+                startTime: flight.startTime,
+                endTime: flight.endTime,
+                maxAltitude: flight.maxAltitude,
+                pointCount: flight.pointCount,
+                maxDistKm: flight.maxDistKm,
+                pathKm: flight.pathKm,
+                points: flight.points
+            };
+        }
+
+        function buildSessionPayload(sessionName) {
+            const center = map.getCenter();
+            return {
+                version: SESSION_VERSION,
+                app: 'igc-viewer',
+                savedAt: new Date().toISOString(),
+                name: sessionName || '',
+                mapView: {
+                    center: [center.lat, center.lng],
+                    zoom: map.getZoom()
+                },
+                flights: flights.map(flightToStored)
+            };
+        }
+
+        function normalizeSessionPayload(data) {
+            if (Array.isArray(data)) {
+                return { flights: data };
+            }
+            if (data && Array.isArray(data.flights)) {
+                return data;
+            }
+            throw new Error('Invalid JSON: expected { "flights": [...] }');
+        }
+
+        function applySessionPayload(payload, options = {}) {
+            const { restoreMapView = true } = options;
+            const session = normalizeSessionPayload(payload);
+
+            clearAllFlights();
+            for (const stored of session.flights) {
+                if (!stored.points || stored.points.length === 0) continue;
+                addFlightFromStored(stored);
+            }
+            if (flights.length === 0) {
+                throw new Error('No valid tracks in session');
+            }
+
+            if (restoreMapView && session.mapView && session.mapView.center) {
+                const zoom = session.mapView.zoom != null ? session.mapView.zoom : map.getZoom();
+                map.setView(session.mapView.center, zoom);
+            } else {
+                fitMapToFlights();
+            }
+
+            if (session.name) {
+                saveNameInput.value = session.name;
+            }
+
+            displayFlightInfo();
+            updatePostLoadUI();
+        }
+
+        function exportToJsonFile() {
+            if (flights.length === 0) {
+                alert('Load at least one flight before exporting');
+                return;
+            }
+            const sessionName = saveNameInput.value.trim();
+            const payload = buildSessionPayload(sessionName);
+            const json = JSON.stringify(payload, null, 2);
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            const safeName = (sessionName || 'igc-session')
+                .replace(/[^\w\-]+/g, '_')
+                .replace(/^_+|_+$/g, '')
+                .slice(0, 80) || 'igc-session';
+            link.href = url;
+            link.download = `${safeName}.json`;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(url);
+        }
+
+        async function importFromJsonFile(file) {
+            let payload;
+            try {
+                payload = JSON.parse(await file.text());
+            } catch {
+                alert('Could not read JSON file');
+                return;
+            }
+            if (flights.length > 0 && !confirm('Replace current flights with imported JSON?')) {
+                return;
+            }
+            try {
+                applySessionPayload(payload);
+            } catch (err) {
+                alert(err.message || 'Import failed');
+            }
+        }
+
+        function saveCurrentSession() {
+            const name = saveNameInput.value.trim();
+            if (!name) {
+                alert('Enter a name for this save');
+                saveNameInput.focus();
+                return;
+            }
+            if (flights.length === 0) {
+                alert('Load at least one flight before saving');
+                return;
+            }
+            const saves = getStoredSaves();
+            if (saves[name] && !confirm(`"${name}" already exists. Overwrite?`)) {
+                return;
+            }
+            try {
+                const payload = buildSessionPayload(name);
+                saves[name] = {
+                    savedAt: payload.savedAt,
+                    name: payload.name,
+                    mapView: payload.mapView,
+                    flights: payload.flights
+                };
+                writeStoredSaves(saves);
+                refreshSavedSessionsList();
+                savedSessionsSelect.value = name;
+                alert(`Saved "${name}"`);
+            } catch (err) {
+                if (err.name === 'QuotaExceededError') {
+                    alert('Storage full — try fewer flights or delete old saves.');
+                } else {
+                    alert('Could not save: ' + err.message);
+                }
+            }
+        }
+
+        function loadSavedSession() {
+            const name = savedSessionsSelect.value;
+            if (!name) {
+                alert('Select a saved session to load');
+                return;
+            }
+            const saves = getStoredSaves();
+            const entry = saves[name];
+            if (!entry || !entry.flights || entry.flights.length === 0) {
+                alert('Save is empty or invalid');
+                return;
+            }
+            if (flights.length > 0 && !confirm('Replace current flights with this save?')) {
+                return;
+            }
+            try {
+                applySessionPayload(entry);
+            } catch (err) {
+                alert(err.message || 'Load failed');
+            }
+        }
+
+        function deleteSavedSession() {
+            const name = savedSessionsSelect.value;
+            if (!name) {
+                alert('Select a saved session to delete');
+                return;
+            }
+            if (!confirm(`Delete saved session "${name}"?`)) {
+                return;
+            }
+            const saves = getStoredSaves();
+            delete saves[name];
+            writeStoredSaves(saves);
+            refreshSavedSessionsList();
+        }
+
+        function renderFlightOnMap(points, flightIndex) {
+            const color = getFlightColor(flightIndex);
+            const endPoint = points[points.length - 1];
+            const latLngs = points.map(p => [p.lat, p.lon]);
+
+            const polyline = L.polyline(latLngs, {
+                color,
+                weight: 3,
+                opacity: 0.8,
+                smoothFactor: 1
+            }).addTo(map);
+
+            const startMarker = L.circleMarker([points[0].lat, points[0].lon], {
+                radius: 6,
+                fillColor: color,
+                color: '#fff',
+                weight: 2,
+                opacity: 1,
+                fillOpacity: 0.8
+            }).bindPopup(`<b>Flight ${flightIndex + 1} — Start</b><br/>UTC: ${formatIgCTime(points[0].time)}`)
+             .addTo(map);
+
+            const endMarker = L.circleMarker([endPoint.lat, endPoint.lon], {
+                radius: 6,
+                fillColor: color,
+                color: '#000',
+                weight: 2,
+                opacity: 1,
+                fillOpacity: 0.6
+            }).bindPopup(`<b>Flight ${flightIndex + 1} — End</b><br/>UTC: ${formatIgCTime(endPoint.time)}`)
+             .addTo(map);
+
+            flightOverlays.push(polyline, startMarker, endMarker);
+        }
+
+        function addFlightFromStored(stored) {
+            const points = stored.points.map(p => ({
+                lat: p.lat,
+                lon: p.lon,
+                alt: p.alt,
+                time: p.time
+            }));
+            const idx = flights.length;
+            renderFlightOnMap(points, idx);
+            flights.push({
+                name: stored.name || 'Flight',
+                pilot1: stored.pilot1 || '',
+                pilot2: stored.pilot2 || '',
+                glider: stored.glider || '',
+                date: stored.date || '',
+                startTime: stored.startTime,
+                endTime: stored.endTime,
+                maxAltitude: stored.maxAltitude,
+                pointCount: stored.pointCount,
+                maxDistKm: stored.maxDistKm,
+                pathKm: stored.pathKm,
+                points
+            });
+        }
+
+        function resetLoadForm() {
+            flightForm.reset();
+        }
+
+        function showLoadPanel() {
+            loadPanel.classList.remove('hidden');
+            resetLoadForm();
+        }
+
+        function hideLoadPanel() {
+            loadPanel.classList.add('hidden');
+        }
+
+        function updatePostLoadUI() {
+            if (flights.length > 0) {
+                postLoadPanel.classList.remove('hidden');
+                hideLoadPanel();
+            } else {
+                postLoadPanel.classList.add('hidden');
+                showLoadPanel();
+            }
+        }
+
+        function fitMapToFlights() {
+            const allLatLngs = [];
+            flightOverlays.forEach(layer => {
+                if (layer instanceof L.Polyline) {
+                    allLatLngs.push(...layer.getLatLngs());
+                }
+            });
+            if (allLatLngs.length > 0) {
+                map.fitBounds(L.polyline(allLatLngs).getBounds(), { padding: [50, 50] });
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function displayFlightInfo() {
+            const container = document.getElementById('flightInfo');
+            const legend = document.getElementById('legend');
+
+            if (flights.length === 0) {
+                container.innerHTML = '<p style="color:#888;">No flights loaded yet.</p>';
+                legend.innerHTML = '';
+                return;
+            }
+
+            let html = '<table style="width:100%; border-collapse: collapse;">';
+            html += '<tr style="background: #f0f0f0;">';
+            html += '<th style="border: 1px solid #ddd; padding: 8px;">Flight</th>';
+            html += '<th style="border: 1px solid #ddd; padding: 8px;">Pilot 1</th>';
+            html += '<th style="border: 1px solid #ddd; padding: 8px;">Pilot 2</th>';
+            html += '<th style="border: 1px solid #ddd; padding: 8px;">Glider</th>';
+            html += '<th style="border: 1px solid #ddd; padding: 8px;">Date</th>';
+            html += '<th style="border: 1px solid #ddd; padding: 8px;">Time UTC</th>';
+            html += '<th style="border: 1px solid #ddd; padding: 8px;">Max (km)</th>';
+            html += '<th style="border: 1px solid #ddd; padding: 8px;">Path (km)</th>';
+            html += '<th style="border: 1px solid #ddd; padding: 8px;">Max Alt (m)</th>';
+            html += '<th style="border: 1px solid #ddd; padding: 8px;">Points</th>';
+            html += '</tr>';
+
+            let legendHtml = '';
+            flights.forEach((flight, idx) => {
+                const color = getFlightColor(idx);
+                const timeRange = `${formatIgCTime(flight.startTime)} - ${formatIgCTime(flight.endTime)}`;
+                html += `<tr>
+                    <td style="border: 1px solid #ddd; padding: 8px; color: ${color}; font-weight: bold;">Flight ${idx + 1}</td>
+                    <td style="border: 1px solid #ddd; padding: 8px;">${escapeHtml(flight.pilot1) || '—'}</td>
+                    <td style="border: 1px solid #ddd; padding: 8px;">${escapeHtml(flight.pilot2) || '—'}</td>
+                    <td style="border: 1px solid #ddd; padding: 8px;">${escapeHtml(flight.glider) || '—'}</td>
+                    <td style="border: 1px solid #ddd; padding: 8px;">${escapeHtml(flight.date) || '—'}</td>
+                    <td style="border: 1px solid #ddd; padding: 8px;">${timeRange}</td>
+                    <td style="border: 1px solid #ddd; padding: 8px;">${flight.maxDistKm.toFixed(1)}</td>
+                    <td style="border: 1px solid #ddd; padding: 8px;">${flight.pathKm.toFixed(1)}</td>
+                    <td style="border: 1px solid #ddd; padding: 8px;">${flight.maxAltitude}</td>
+                    <td style="border: 1px solid #ddd; padding: 8px;">${flight.pointCount}</td>
+                </tr>`;
+                legendHtml += `<div class="legend-item">
+                    <div class="legend-color" style="background: ${color};"></div>
+                    <span>Flight ${idx + 1}${flight.pilot1 ? ' — ' + escapeHtml(flight.pilot1) : ''}</span>
+                </div>`;
+            });
+
+            html += '</table>';
+            html += `<p style="margin-top:10px;font-size:12px;color:#666;">
+                <b>Max</b> — greatest straight-line distance between any two fixes on the track.
+                <b>Path</b> — ground distance while gliding; segments with ground speed below ${THERMAL_MAX_SPEED_KMH} km/h (thermaling) are excluded.
+            </p>`;
+            container.innerHTML = html;
+            legend.innerHTML = legendHtml;
+        }
+
+        async function addFlight(file, pilot1Input, pilot2Input, gliderInput) {
+            const content = await file.text();
+            const { points, fileMeta, trackMeta } = parseIGC(content);
+
+            if (points.length === 0) {
+                alert(`No valid GPS points found in ${file.name}`);
+                return false;
+            }
+
+            const { maxDistKm, pathCruiseKm } = computeTrackDistances(points);
+            const idx = flights.length;
+            renderFlightOnMap(points, idx);
+
+            flights.push({
+                name: file.name,
+                pilot1: pilot1Input || fileMeta.pilot1,
+                pilot2: pilot2Input || fileMeta.pilot2,
+                glider: gliderInput || fileMeta.glider,
+                date: fileMeta.date,
+                startTime: trackMeta.startTime,
+                endTime: trackMeta.endTime,
+                maxAltitude: trackMeta.maxAltitude,
+                pointCount: points.length,
+                maxDistKm,
+                pathKm: pathCruiseKm,
+                points
+            });
+
+            fitMapToFlights();
+            displayFlightInfo();
+            updatePostLoadUI();
+            return true;
+        }
+
+        flightForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const fileInput = document.getElementById('igcFile');
+            if (!fileInput.files.length) {
+                alert('Please select an IGC file');
+                return;
+            }
+            const pilot1 = document.getElementById('pilot1').value.trim();
+            const pilot2 = document.getElementById('pilot2').value.trim();
+            const glider = document.getElementById('glider').value.trim();
+            await addFlight(fileInput.files[0], pilot1, pilot2, glider);
+        });
+
+        document.getElementById('btnAddAnother').addEventListener('click', () => {
+            showLoadPanel();
+        });
+
+        document.getElementById('btnClear').addEventListener('click', () => {
+            clearAllFlights();
+            map.setView([50, 10], 6);
+        });
+
+        document.getElementById('btnSave').addEventListener('click', saveCurrentSession);
+        document.getElementById('btnLoadSaved').addEventListener('click', loadSavedSession);
+        document.getElementById('btnDeleteSaved').addEventListener('click', deleteSavedSession);
+        document.getElementById('btnExportJson').addEventListener('click', exportToJsonFile);
+
+        const jsonImportFile = document.getElementById('jsonImportFile');
+        document.getElementById('btnImportJson').addEventListener('click', () => {
+            jsonImportFile.click();
+        });
+        jsonImportFile.addEventListener('change', async () => {
+            const file = jsonImportFile.files[0];
+            jsonImportFile.value = '';
+            if (!file) return;
+            await importFromJsonFile(file);
+        });
+
+        refreshSavedSessionsList();
+    </script>
+</body>
+</html>
